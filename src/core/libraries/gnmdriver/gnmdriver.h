@@ -51,7 +51,9 @@ s32 PS4_SYSV_ABI sceGnmDrawIndexIndirectCountMulti(u32* cmdbuf, u32 size, u32 da
                                                    u32 max_count, u64 count_addr, u32 shader_stage,
                                                    u32 vertex_sgpr_offset, u32 instance_sgpr_offset,
                                                    u32 flags);
-int PS4_SYSV_ABI sceGnmDrawIndexIndirectMulti();
+int PS4_SYSV_ABI sceGnmDrawIndexIndirectMulti(u32* cmdbuf, u32 size, u32 data_offset, u32 max_count,
+                                              u32 shader_stage, u32 vertex_sgpr_offset,
+                                              u32 instance_sgpr_offset, u32 flags);
 int PS4_SYSV_ABI sceGnmDrawIndexMultiInstanced();
 s32 PS4_SYSV_ABI sceGnmDrawIndexOffset(u32* cmdbuf, u32 size, u32 index_offset, u32 index_count,
                                        u32 flags);
@@ -222,7 +224,7 @@ int PS4_SYSV_ABI sceGnmSubmitCommandBuffersForWorkload(u32 workload, u32 count,
                                                        const u32* ccb_gpu_addrs[],
                                                        u32* ccb_sizes_in_bytes);
 int PS4_SYSV_ABI sceGnmSubmitDone();
-int PS4_SYSV_ABI sceGnmUnmapComputeQueue();
+int PS4_SYSV_ABI sceGnmUnmapComputeQueue(u32 vqid);
 int PS4_SYSV_ABI sceGnmUnregisterAllResourcesForOwner();
 int PS4_SYSV_ABI sceGnmUnregisterOwnerAndResources();
 int PS4_SYSV_ABI sceGnmUnregisterResource();
@@ -284,7 +286,7 @@ int PS4_SYSV_ABI Func_ECB4C6BA41FE3350();
 int PS4_SYSV_ABI sceGnmDebugModuleReset();
 int PS4_SYSV_ABI sceGnmDebugReset();
 int PS4_SYSV_ABI Func_C4C328B7CF3B4171();
-int PS4_SYSV_ABI sceGnmDrawInitToDefaultContextStateInternalCommand();
+int PS4_SYSV_ABI sceGnmDrawInitToDefaultContextStateInternalCommand(u32* cmdbuf, u32 size);
 int PS4_SYSV_ABI sceGnmDrawInitToDefaultContextStateInternalSize();
 int PS4_SYSV_ABI sceGnmFindResources();
 int PS4_SYSV_ABI sceGnmGetResourceRegistrationBuffers();
@@ -295,5 +297,5 @@ int PS4_SYSV_ABI Func_BFB41C057478F0BF();
 int PS4_SYSV_ABI Func_E51D44DB8151238C();
 int PS4_SYSV_ABI Func_F916890425496553();
 
-void RegisterlibSceGnmDriver(Core::Loader::SymbolsResolver* sym);
+void RegisterLib(Core::Loader::SymbolsResolver* sym);
 } // namespace Libraries::GnmDriver

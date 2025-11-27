@@ -104,6 +104,20 @@ s32 PS4_SYSV_ABI sceVideoOutAddVblankEvent(Kernel::SceKernelEqueue eq, s32 handl
     return ORBIS_OK;
 }
 
+s32 PS4_SYSV_ABI sceVideoOutDeleteVblankEvent(Kernel::SceKernelEqueue eq, s32 handle) {
+    auto* port = driver->GetPort(handle);
+    if (port == nullptr) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_HANDLE;
+    }
+
+    if (eq == nullptr) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
+    }
+    eq->RemoveEvent(handle, Kernel::SceKernelEvent::Filter::VideoOut);
+    port->vblank_events.erase(find(port->vblank_events.begin(), port->vblank_events.end(), eq));
+    return ORBIS_OK;
+}
+
 s32 PS4_SYSV_ABI sceVideoOutRegisterBuffers(s32 handle, s32 startIndex, void* const* addresses,
                                             s32 bufferNum, const BufferAttribute* attribute) {
     if (!addresses || !attribute) {
@@ -142,7 +156,7 @@ s32 PS4_SYSV_ABI sceVideoOutSubmitFlip(s32 handle, s32 bufferIndex, s32 flipMode
     }
 
     if (flipMode != 1) {
-        LOG_WARNING(Lib_VideoOut, "flipmode = {}", flipMode);
+        LOG_DEBUG(Lib_VideoOut, "flipmode = {}", flipMode);
     }
 
     if (bufferIndex < -1 || bufferIndex > 15) {
@@ -166,7 +180,7 @@ s32 PS4_SYSV_ABI sceVideoOutSubmitFlip(s32 handle, s32 bufferIndex, s32 flipMode
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceVideoOutGetEventId(const Kernel::SceKernelEvent* ev) {
+s32 PS4_SYSV_ABI sceVideoOutGetEventId(const Kernel::SceKernelEvent* ev) {
     if (ev == nullptr) {
         return ORBIS_VIDEO_OUT_ERROR_INVALID_ADDRESS;
     }
@@ -194,7 +208,7 @@ int PS4_SYSV_ABI sceVideoOutGetEventId(const Kernel::SceKernelEvent* ev) {
     }
 }
 
-int PS4_SYSV_ABI sceVideoOutGetEventData(const Kernel::SceKernelEvent* ev, int64_t* data) {
+s32 PS4_SYSV_ABI sceVideoOutGetEventData(const Kernel::SceKernelEvent* ev, s64* data) {
     if (ev == nullptr || data == nullptr) {
         return ORBIS_VIDEO_OUT_ERROR_INVALID_ADDRESS;
     }
@@ -206,9 +220,21 @@ int PS4_SYSV_ABI sceVideoOutGetEventData(const Kernel::SceKernelEvent* ev, int64
     if (ev->ident != static_cast<s32>(OrbisVideoOutInternalEventId::Flip) || ev->data == 0) {
         *data = event_data;
     } else {
-        *data = event_data | 0xFFFF000000000000;
+        *data = event_data | 0xffff000000000000;
     }
     return ORBIS_OK;
+}
+
+s32 PS4_SYSV_ABI sceVideoOutGetEventCount(const Kernel::SceKernelEvent* ev) {
+    if (ev == nullptr) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    }
+    if (ev->filter != Kernel::SceKernelEvent::Filter::VideoOut) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_EVENT;
+    }
+
+    auto event_data = static_cast<OrbisVideoOutEventData>(ev->data);
+    return event_data.count;
 }
 
 s32 PS4_SYSV_ABI sceVideoOutGetFlipStatus(s32 handle, FlipStatus* status) {
@@ -256,7 +282,12 @@ s32 PS4_SYSV_ABI sceVideoOutGetVblankStatus(int handle, SceVideoOutVblankStatus*
 
 s32 PS4_SYSV_ABI sceVideoOutGetResolutionStatus(s32 handle, SceVideoOutResolutionStatus* status) {
     LOG_INFO(Lib_VideoOut, "called");
-    *status = driver->GetPort(handle)->resolution;
+    auto* port = driver->GetPort(handle);
+    if (!port || !port->is_open) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_HANDLE;
+    }
+
+    *status = port->resolution;
     return ORBIS_OK;
 }
 
@@ -398,83 +429,66 @@ s32 PS4_SYSV_ABI sceVideoOutConfigureOutputMode_(s32 handle, u32 reserved, const
         return ORBIS_VIDEO_OUT_ERROR_INVALID_VALUE;
     }
 
-    if (mode->colorimetry != OrbisVideoOutColorimetry::Any) {
-        auto& game_info = Common::ElfInfo::Instance();
-        if (mode->colorimetry == OrbisVideoOutColorimetry::Bt2020PQ &&
-            game_info.GetPSFAttributes().support_hdr) {
-            port->is_mode_changing = true;
-            presenter->SetHDR(true);
-            port->is_mode_changing = false;
-        } else {
-            return ORBIS_VIDEO_OUT_ERROR_INVALID_VALUE;
+    switch (mode->colorimetry) {
+    case OrbisVideoOutColorimetry::Any:
+        port->is_hdr = false;
+        break;
+    case OrbisVideoOutColorimetry::Bt2020PQ:
+        if (Common::ElfInfo::Instance().GetPSFAttributes().support_hdr) {
+            port->is_hdr = true;
         }
+        break;
+    default:
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_VALUE;
     }
 
     return ORBIS_OK;
 }
 
+s32 PS4_SYSV_ABI sceVideoOutSetWindowModeMargins(s32 handle, s32 top, s32 bottom) {
+    LOG_DEBUG(Lib_VideoOut, "(STUBBED) called top = {}, bottom = {}", top, bottom);
+    return ORBIS_OK;
+}
+
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
-    driver = std::make_unique<VideoOutDriver>(Config::getScreenWidth(), Config::getScreenHeight());
+    driver = std::make_unique<VideoOutDriver>(Config::getInternalScreenWidth(),
+                                              Config::getInternalScreenHeight());
 
-    LIB_FUNCTION("SbU3dwp80lQ", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutGetFlipStatus);
-    LIB_FUNCTION("U46NwOiJpys", "libSceVideoOut", 1, "libSceVideoOut", 0, 0, sceVideoOutSubmitFlip);
-    LIB_FUNCTION("w3BY+tAEiQY", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutRegisterBuffers);
-    LIB_FUNCTION("HXzjK9yI30k", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutAddFlipEvent);
-    LIB_FUNCTION("Xru92wHJRmg", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutAddVblankEvent);
-    LIB_FUNCTION("CBiu4mCE1DA", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutSetFlipRate);
-    LIB_FUNCTION("i6-sR91Wt-4", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("SbU3dwp80lQ", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutGetFlipStatus);
+    LIB_FUNCTION("U46NwOiJpys", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutSubmitFlip);
+    LIB_FUNCTION("w3BY+tAEiQY", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutRegisterBuffers);
+    LIB_FUNCTION("HXzjK9yI30k", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutAddFlipEvent);
+    LIB_FUNCTION("Xru92wHJRmg", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutAddVblankEvent);
+    LIB_FUNCTION("CBiu4mCE1DA", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutSetFlipRate);
+    LIB_FUNCTION("i6-sR91Wt-4", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutSetBufferAttribute);
-    LIB_FUNCTION("6kPnj51T62Y", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("6kPnj51T62Y", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutGetResolutionStatus);
-    LIB_FUNCTION("Up36PTk687E", "libSceVideoOut", 1, "libSceVideoOut", 0, 0, sceVideoOutOpen);
-    LIB_FUNCTION("zgXifHT9ErY", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutIsFlipPending);
-    LIB_FUNCTION("N5KDtkIjjJ4", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("Up36PTk687E", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutOpen);
+    LIB_FUNCTION("zgXifHT9ErY", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutIsFlipPending);
+    LIB_FUNCTION("N5KDtkIjjJ4", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutUnregisterBuffers);
-    LIB_FUNCTION("OcQybQejHEY", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("OcQybQejHEY", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutGetBufferLabelAddress);
-    LIB_FUNCTION("uquVH4-Du78", "libSceVideoOut", 1, "libSceVideoOut", 0, 0, sceVideoOutClose);
-    LIB_FUNCTION("1FZBKy8HeNU", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutGetVblankStatus);
-    LIB_FUNCTION("kGVLc3htQE8", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("uquVH4-Du78", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutClose);
+    LIB_FUNCTION("1FZBKy8HeNU", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutGetVblankStatus);
+    LIB_FUNCTION("kGVLc3htQE8", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutGetDeviceCapabilityInfo);
-    LIB_FUNCTION("j6RaAUlaLv0", "libSceVideoOut", 1, "libSceVideoOut", 0, 0, sceVideoOutWaitVblank);
-    LIB_FUNCTION("U2JJtSqNKZI", "libSceVideoOut", 1, "libSceVideoOut", 0, 0, sceVideoOutGetEventId);
-    LIB_FUNCTION("rWUTcKdkUzQ", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutGetEventData);
-    LIB_FUNCTION("DYhhWbJSeRg", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("j6RaAUlaLv0", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutWaitVblank);
+    LIB_FUNCTION("U2JJtSqNKZI", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutGetEventId);
+    LIB_FUNCTION("rWUTcKdkUzQ", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutGetEventData);
+    LIB_FUNCTION("Mt4QHHkxkOc", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutGetEventCount);
+    LIB_FUNCTION("DYhhWbJSeRg", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutColorSettingsSetGamma);
-    LIB_FUNCTION("pv9CI5VC+R0", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutAdjustColor);
-    LIB_FUNCTION("-Ozn0F1AFRg", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutDeleteFlipEvent);
-    LIB_FUNCTION("pjkDsgxli6c", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
-                 sceVideoOutModeSetAny_);
-    LIB_FUNCTION("N1bEoJ4SRw4", "libSceVideoOut", 1, "libSceVideoOut", 0, 0,
+    LIB_FUNCTION("pv9CI5VC+R0", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutAdjustColor);
+    LIB_FUNCTION("-Ozn0F1AFRg", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutDeleteFlipEvent);
+    LIB_FUNCTION("oNOQn3knW6s", "libSceVideoOut", 1, "libSceVideoOut",
+                 sceVideoOutDeleteVblankEvent);
+    LIB_FUNCTION("pjkDsgxli6c", "libSceVideoOut", 1, "libSceVideoOut", sceVideoOutModeSetAny_);
+    LIB_FUNCTION("N1bEoJ4SRw4", "libSceVideoOut", 1, "libSceVideoOut",
                  sceVideoOutConfigureOutputMode_);
-
-    // openOrbis appears to have libSceVideoOut_v1 module libSceVideoOut_v1.1
-    LIB_FUNCTION("Up36PTk687E", "libSceVideoOut", 1, "libSceVideoOut", 1, 1, sceVideoOutOpen);
-    LIB_FUNCTION("CBiu4mCE1DA", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutSetFlipRate);
-    LIB_FUNCTION("HXzjK9yI30k", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutAddFlipEvent);
-    LIB_FUNCTION("i6-sR91Wt-4", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutSetBufferAttribute);
-    LIB_FUNCTION("w3BY+tAEiQY", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutRegisterBuffers);
-    LIB_FUNCTION("OcQybQejHEY", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutGetBufferLabelAddress);
-    LIB_FUNCTION("U46NwOiJpys", "libSceVideoOut", 1, "libSceVideoOut", 1, 1, sceVideoOutSubmitFlip);
-    LIB_FUNCTION("SbU3dwp80lQ", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutGetFlipStatus);
-    LIB_FUNCTION("kGVLc3htQE8", "libSceVideoOut", 1, "libSceVideoOut", 1, 1,
-                 sceVideoOutGetDeviceCapabilityInfo);
+    LIB_FUNCTION("MTxxrOCeSig", "libSceVideoOut", 1, "libSceVideoOut",
+                 sceVideoOutSetWindowModeMargins);
 }
 
 } // namespace Libraries::VideoOut

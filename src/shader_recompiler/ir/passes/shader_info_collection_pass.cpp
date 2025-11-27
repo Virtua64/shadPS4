@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shader_recompiler/ir/program.h"
+#include "shader_recompiler/profile.h"
 
 namespace Shader::Optimization {
 
@@ -33,18 +34,50 @@ void Visit(Info& info, const IR::Inst& inst) {
         info.uses_patches |= 1U << IR::GenericPatchIndex(patch);
         break;
     }
+    case IR::Opcode::LoadSharedU16:
+    case IR::Opcode::WriteSharedU16:
+        info.shared_types |= IR::Type::U16;
+        break;
     case IR::Opcode::LoadSharedU32:
-    case IR::Opcode::LoadSharedU64:
     case IR::Opcode::WriteSharedU32:
+    case IR::Opcode::SharedAtomicIAdd32:
+    case IR::Opcode::SharedAtomicISub32:
+    case IR::Opcode::SharedAtomicSMin32:
+    case IR::Opcode::SharedAtomicUMin32:
+    case IR::Opcode::SharedAtomicSMax32:
+    case IR::Opcode::SharedAtomicUMax32:
+    case IR::Opcode::SharedAtomicInc32:
+    case IR::Opcode::SharedAtomicDec32:
+    case IR::Opcode::SharedAtomicAnd32:
+    case IR::Opcode::SharedAtomicOr32:
+    case IR::Opcode::SharedAtomicXor32:
+        info.shared_types |= IR::Type::U32;
+        break;
+    case IR::Opcode::SharedAtomicIAdd64:
+    case IR::Opcode::SharedAtomicISub64:
+    case IR::Opcode::SharedAtomicSMin64:
+    case IR::Opcode::SharedAtomicUMin64:
+    case IR::Opcode::SharedAtomicSMax64:
+    case IR::Opcode::SharedAtomicUMax64:
+    case IR::Opcode::SharedAtomicInc64:
+    case IR::Opcode::SharedAtomicDec64:
+    case IR::Opcode::SharedAtomicAnd64:
+    case IR::Opcode::SharedAtomicOr64:
+    case IR::Opcode::SharedAtomicXor64:
+        info.uses_shared_int64_atomics = true;
+        [[fallthrough]];
+    case IR::Opcode::LoadSharedU64:
     case IR::Opcode::WriteSharedU64:
-        info.uses_shared = true;
+        info.shared_types |= IR::Type::U64;
         break;
     case IR::Opcode::ConvertF16F32:
     case IR::Opcode::ConvertF32F16:
+    case IR::Opcode::BitCastU16F16:
     case IR::Opcode::BitCastF16U16:
         info.uses_fp16 = true;
         break;
-    case IR::Opcode::BitCastU64F64:
+    case IR::Opcode::PackDouble2x32:
+    case IR::Opcode::UnpackDouble2x32:
         info.uses_fp64 = true;
         break;
     case IR::Opcode::ImageWrite:
@@ -62,6 +95,9 @@ void Visit(Info& info, const IR::Inst& inst) {
     case IR::Opcode::DiscardCond:
         info.has_discard = true;
         break;
+    case IR::Opcode::BitwiseXor32:
+        info.has_bitwise_xor = true;
+        break;
     case IR::Opcode::ImageGather:
     case IR::Opcode::ImageGatherDref:
         info.has_image_gather = true;
@@ -69,6 +105,21 @@ void Visit(Info& info, const IR::Inst& inst) {
     case IR::Opcode::ImageQueryDimensions:
     case IR::Opcode::ImageQueryLod:
         info.has_image_query = true;
+        break;
+    case IR::Opcode::ImageAtomicFMax32:
+    case IR::Opcode::ImageAtomicFMin32:
+        info.uses_image_atomic_float_min_max = true;
+        break;
+    case IR::Opcode::BufferAtomicFMax32:
+    case IR::Opcode::BufferAtomicFMin32:
+        info.uses_buffer_atomic_float_min_max = true;
+        break;
+    case IR::Opcode::BufferAtomicIAdd64:
+    case IR::Opcode::BufferAtomicSMax64:
+    case IR::Opcode::BufferAtomicSMin64:
+    case IR::Opcode::BufferAtomicUMax64:
+    case IR::Opcode::BufferAtomicUMin64:
+        info.uses_buffer_int64_atomics = true;
         break;
     case IR::Opcode::LaneId:
         info.uses_lane_id = true;
@@ -78,7 +129,7 @@ void Visit(Info& info, const IR::Inst& inst) {
             info.buffers.push_back({
                 .used_types = IR::Type::U32,
                 .inline_cbuf = AmdGpu::Buffer::Null(),
-                .buffer_type = BufferType::ReadConstUbo,
+                .buffer_type = BufferType::Flatbuf,
             });
             info.has_readconst = true;
         }
@@ -95,9 +146,10 @@ void Visit(Info& info, const IR::Inst& inst) {
 }
 
 void CollectShaderInfoPass(IR::Program& program) {
+    auto& info = program.info;
     for (IR::Block* const block : program.post_order_blocks) {
         for (IR::Inst& inst : block->Instructions()) {
-            Visit(program.info, inst);
+            Visit(info, inst);
         }
     }
 }

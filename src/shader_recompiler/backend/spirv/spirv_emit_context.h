@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <unordered_map>
 #include <sirit/sirit.h>
 
 #include "shader_recompiler/backend/bindings.h"
@@ -44,7 +45,7 @@ public:
     Id Def(const IR::Value& value);
 
     void DefineBufferProperties();
-    void DefineInterpolatedAttribs();
+    void DefineAmdPerVertexAttribs();
     void DefineWorkgroupIndex();
 
     [[nodiscard]] Id DefineInput(Id type, std::optional<u32> location = std::nullopt,
@@ -133,11 +134,31 @@ public:
         return ConstantComposite(type, constituents);
     }
 
+    inline Id AddLabel() {
+        last_label = Module::AddLabel();
+        return last_label;
+    }
+
+    inline Id AddLabel(Id label) {
+        last_label = Module::AddLabel(label);
+        return last_label;
+    }
+
+    Id EmitSharedMemoryAccess(const Id result_type, const Id shared_mem, const Id index) {
+        if (std::popcount(static_cast<u32>(info.shared_types)) > 1) {
+            return OpAccessChain(result_type, shared_mem, u32_zero_value, index);
+        }
+        // Workgroup layout struct omitted.
+        return OpAccessChain(result_type, shared_mem, index);
+    }
+
     Info& info;
     const RuntimeInfo& runtime_info;
     const Profile& profile;
     Stage stage;
     LogicalStage l_stage{};
+
+    Id last_label{};
 
     Id void_id{};
     Id U8{};
@@ -161,15 +182,18 @@ public:
 
     Id true_value{};
     Id false_value{};
+    Id u8_one_value{};
+    Id u8_zero_value{};
+    Id u16_zero_value{};
     Id u32_one_value{};
     Id u32_zero_value{};
     Id f32_zero_value{};
+    Id u64_one_value{};
+    Id u64_zero_value{};
 
-    Id shared_u8{};
     Id shared_u16{};
     Id shared_u32{};
-    Id shared_u32x2{};
-    Id shared_u32x4{};
+    Id shared_u64{};
 
     Id input_u32{};
     Id input_f32{};
@@ -183,6 +207,9 @@ public:
     boost::container::small_vector<Id, 16> interfaces;
 
     Id output_position{};
+    Id output_point_size{};
+    Id output_layer{};
+    Id output_viewport_index{};
     Id primitive_id{};
     Id vertex_index{};
     Id instance_id{};
@@ -191,6 +218,8 @@ public:
     Id frag_coord{};
     Id front_facing{};
     Id frag_depth{};
+    Id sample_mask{};
+    Id sample_index{};
     Id clip_distances{};
     Id cull_distances{};
 
@@ -207,17 +236,20 @@ public:
     Id invocation_id{};
     Id subgroup_local_invocation_id{};
     Id image_u32{};
+    Id image_f32{};
 
-    Id shared_memory_u8{};
     Id shared_memory_u16{};
     Id shared_memory_u32{};
-    Id shared_memory_u32x2{};
-    Id shared_memory_u32x4{};
+    Id shared_memory_u64{};
 
+    Id shared_memory_u16_type{};
     Id shared_memory_u32_type{};
+    Id shared_memory_u64_type{};
 
-    Id interpolate_func{};
-    Id gl_bary_coord_id{};
+    Id bary_coord_smooth{};
+    Id bary_coord_smooth_centroid{};
+    Id bary_coord_smooth_sample{};
+    Id bary_coord_nopersp{};
 
     struct TextureDefinition {
         const VectorIds* data_types;
@@ -230,12 +262,22 @@ public:
         bool is_storage = false;
     };
 
-    enum class BufferAlias : u32 {
+    enum class PointerType : u32 {
         U8,
         U16,
         U32,
         F32,
+        U64,
+        F64,
         NumAlias,
+    };
+
+    enum class PointerSize : u32 {
+        B8,
+        B16,
+        B32,
+        B64,
+        NumClass,
     };
 
     struct BufferSpv {
@@ -246,19 +288,23 @@ public:
     struct BufferDefinition {
         u32 binding;
         BufferType buffer_type;
-        Id offset;
-        Id offset_dwords;
-        Id size;
-        Id size_shorts;
-        Id size_dwords;
-        std::array<BufferSpv, u32(BufferAlias::NumAlias)> aliases;
+        std::array<Id, u32(PointerSize::NumClass)> offsets;
+        std::array<Id, u32(PointerSize::NumClass)> sizes;
+        std::array<BufferSpv, u32(PointerType::NumAlias)> aliases;
 
-        const BufferSpv& operator[](BufferAlias alias) const {
-            return aliases[u32(alias)];
+        template <class Self>
+        auto& Alias(this Self& self, PointerType alias) {
+            return self.aliases[u32(alias)];
         }
 
-        BufferSpv& operator[](BufferAlias alias) {
-            return aliases[u32(alias)];
+        template <class Self>
+        auto& Offset(this Self& self, PointerSize size) {
+            return self.offsets[u32(size)];
+        }
+
+        template <class Self>
+        auto& Size(this Self& self, PointerSize size) {
+            return self.sizes[u32(size)];
         }
     };
 
@@ -267,18 +313,27 @@ public:
     boost::container::small_vector<BufferDefinition, 16> buffers;
     boost::container::small_vector<TextureDefinition, 8> images;
     boost::container::small_vector<Id, 4> samplers;
+    std::unordered_map<u32, Id> first_to_last_label_map;
+
+    size_t flatbuf_index{};
+    //size_t bda_pagetable_index{};
+    //size_t fault_buffer_index{};
+    Id physical_pointer_type_u32;
 
     Id sampler_type{};
     Id sampler_pointer_type{};
 
     struct SpirvAttribute {
-        Id id;
+        union {
+            Id id;
+            std::array<Id, 3> id_array;
+        };
         Id pointer_type;
         Id component_type;
         u32 num_components;
         bool is_integer{};
         bool is_loaded{};
-        s32 buffer_handle{-1};
+        bool is_array{};
     };
     Id input_attr_array;
     Id output_attr_array;
@@ -291,10 +346,13 @@ public:
     Id uf10_to_f32{};
     Id f32_to_uf10{};
 
+    Id get_bda_pointer{};
+
 private:
     void DefineArithmeticTypes();
     void DefineInterfaces();
     void DefineInputs();
+    void DefineVertexBlock();
     void DefineOutputs();
     void DefinePushDataBlock();
     void DefineBuffers();
@@ -303,7 +361,7 @@ private:
     void DefineFunctions();
 
     SpirvAttribute GetAttributeInfo(AmdGpu::NumberFormat fmt, Id id, u32 num_components,
-                                    bool output);
+                                    bool output, bool loaded = false, bool array = false);
 
     BufferSpv DefineBuffer(bool is_storage, bool is_written, u32 elem_shift, BufferType buffer_type,
                            Id data_type);

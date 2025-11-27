@@ -26,21 +26,7 @@ if (NOT TARGET fmt::fmt)
     add_subdirectory(fmt)
 endif()
 
-# CryptoPP
-if (NOT TARGET cryptopp::cryptopp)
-    set(CRYPTOPP_INSTALL OFF)
-    set(CRYPTOPP_BUILD_TESTING OFF)
-    set(CRYPTOPP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cryptopp)
-    # cryptopp instruction set checks do not account for added compile options,
-    # so disable extensions in the library config to match our chosen target CPU.
-    set(CRYPTOPP_DISABLE_AESNI ON)
-    set(CRYPTOPP_DISABLE_AVX2 ON)
-    add_subdirectory(cryptopp-cmake)
-    file(COPY cryptopp DESTINATION cryptopp FILES_MATCHING PATTERN "*.h")
-    # remove externals/cryptopp from include directories because it contains a conflicting zlib.h file
-    set_target_properties(cryptopp PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/cryptopp")
-endif()
-
+# FFmpeg
 if (NOT TARGET FFmpeg::ffmpeg)
     add_subdirectory(ffmpeg-core)
     add_library(FFmpeg::ffmpeg ALIAS ffmpeg)
@@ -151,12 +137,6 @@ if (NOT TARGET Zydis::Zydis)
     add_subdirectory(zydis)
 endif()
 
-# Winpthreads
-if (WIN32)
-    add_subdirectory(winpthreads)
-    target_include_directories(winpthreads INTERFACE winpthreads/include)
-endif()
-
 # sirit
 add_subdirectory(sirit)
 if (WIN32)
@@ -215,6 +195,12 @@ if (NOT TARGET pugixml::pugixml)
     add_subdirectory(pugixml)
 endif()
 
+# libusb
+if (NOT TARGET libusb::usb)
+    add_subdirectory(ext-libusb)
+    add_library(libusb::usb ALIAS usb-1.0)
+endif()
+
 # Discord RPC
 if (ENABLE_DISCORD_RPC)
     add_subdirectory(discord-rpc)
@@ -230,6 +216,10 @@ if (NOT TARGET stb::headers)
     add_library(stb::headers ALIAS stb)
 endif()
 
+# hwinfo
+set(HWINFO_STATIC ON)
+add_subdirectory(hwinfo)
+
 # Apple-only dependencies
 if (APPLE)
     # date
@@ -241,6 +231,21 @@ if (APPLE)
 
     # MoltenVK
     if (NOT TARGET MoltenVK)
+        set(MVK_EXCLUDE_SPIRV_TOOLS ON)
+        set(MVK_USE_METAL_PRIVATE_API ON)
         add_subdirectory(MoltenVK)
     endif()
+
+    if (NOT TARGET epoll-shim)
+        add_subdirectory(epoll-shim)
+    endif()
 endif()
+
+#windows only
+if (WIN32)
+add_subdirectory(ext-wepoll)
+endif()
+
+#nlohmann json 
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+add_subdirectory(json)

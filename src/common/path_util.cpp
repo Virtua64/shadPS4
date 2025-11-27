@@ -25,10 +25,6 @@
 #endif
 #endif
 
-#ifdef ENABLE_QT_GUI
-#include <QString>
-#endif
-
 namespace Common::FS {
 
 namespace fs = std::filesystem;
@@ -60,7 +56,7 @@ static CFURLRef UntranslocateBundlePath(const CFURLRef bundle_path) {
     return nullptr;
 }
 
-static std::filesystem::path GetBundleParentDirectory() {
+static std::optional<std::filesystem::path> GetBundleParentDirectory() {
     if (CFBundleRef bundle_ref = CFBundleGetMainBundle()) {
         if (CFURLRef bundle_url_ref = CFBundleCopyBundleURL(bundle_ref)) {
             SCOPE_EXIT {
@@ -83,16 +79,11 @@ static std::filesystem::path GetBundleParentDirectory() {
             }
         }
     }
-    return std::filesystem::current_path();
+    return std::nullopt;
 }
 #endif
 
 static auto UserPaths = [] {
-#ifdef __APPLE__
-    // Set the current path to the directory containing the app bundle.
-    std::filesystem::current_path(GetBundleParentDirectory());
-#endif
-
     // Try the portable user directory first.
     auto user_dir = std::filesystem::current_path() / PORTABLE_DIR;
     if (!std::filesystem::exists(user_dir)) {
@@ -126,7 +117,6 @@ static auto UserPaths = [] {
     create_path(PathType::LogDir, user_dir / LOG_DIR);
     create_path(PathType::ScreenshotsDir, user_dir / SCREENSHOTS_DIR);
     create_path(PathType::ShaderDir, user_dir / SHADER_DIR);
-    create_path(PathType::SaveDataDir, user_dir / SAVEDATA_DIR);
     create_path(PathType::GameDataDir, user_dir / GAMEDATA_DIR);
     create_path(PathType::TempDataDir, user_dir / TEMPDATA_DIR);
     create_path(PathType::SysModuleDir, user_dir / SYSMODULES_DIR);
@@ -136,6 +126,7 @@ static auto UserPaths = [] {
     create_path(PathType::PatchesDir, user_dir / PATCHES_DIR);
     create_path(PathType::MetaDataDir, user_dir / METADATA_DIR);
     create_path(PathType::CustomTrophy, user_dir / CUSTOM_TROPHY);
+    create_path(PathType::CustomConfigs, user_dir / CUSTOM_CONFIGS);
 
     std::ofstream notice_file(user_dir / CUSTOM_TROPHY / "Notice.txt");
     if (notice_file.is_open()) {
@@ -226,23 +217,5 @@ std::optional<fs::path> FindGameByID(const fs::path& dir, const std::string& gam
 
     return std::nullopt;
 }
-
-#ifdef ENABLE_QT_GUI
-void PathToQString(QString& result, const std::filesystem::path& path) {
-#ifdef _WIN32
-    result = QString::fromStdWString(path.wstring());
-#else
-    result = QString::fromStdString(path.string());
-#endif
-}
-
-std::filesystem::path PathFromQString(const QString& path) {
-#ifdef _WIN32
-    return std::filesystem::path(path.toStdWString());
-#else
-    return std::filesystem::path(path.toStdString());
-#endif
-}
-#endif
 
 } // namespace Common::FS

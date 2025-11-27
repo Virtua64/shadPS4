@@ -1,9 +1,10 @@
 //  SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "pp_pass.h"
+#include "video_core/renderer_vulkan/host_passes/pp_pass.h"
 
 #include "common/assert.h"
+#include "common/config.h"
 #include "video_core/host_shaders/fs_tri_vert.h"
 #include "video_core/host_shaders/post_process_frag.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -14,7 +15,7 @@
 
 namespace Vulkan::HostPasses {
 
-void PostProcessingPass::Create(vk::Device device) {
+void PostProcessingPass::Create(vk::Device device, const vk::Format surface_format) {
     static const std::array pp_shaders{
         HostShaders::FS_TRI_VERT,
         HostShaders::POST_PROCESS_FRAG,
@@ -76,9 +77,9 @@ void PostProcessingPass::Create(vk::Device device) {
         Check<"create pp pipeline layout">(device.createPipelineLayoutUnique(layout_info));
 
     const std::array pp_color_formats{
-        vk::Format::eB8G8R8A8Unorm, // swapchain.GetSurfaceFormat().format,
+        surface_format,
     };
-    const vk::PipelineRenderingCreateInfoKHR pipeline_rendering_ci{
+    const vk::PipelineRenderingCreateInfo pipeline_rendering_ci{
         .colorAttachmentCount = pp_color_formats.size(),
         .pColorAttachmentFormats = pp_color_formats.data(),
     };
@@ -187,6 +188,17 @@ void PostProcessingPass::Create(vk::Device device) {
 
 void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                                 vk::Extent2D input_size, Frame& frame, Settings settings) {
+    if (Config::getVkHostMarkersEnabled()) {
+        cmdbuf.beginDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
+            .pLabelName = "Host/Post processing",
+        });
+    }
+
+    constexpr vk::ImageSubresourceRange simple_subresource = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .levelCount = 1,
+        .layerCount = 1,
+    };
     const std::array<vk::RenderingAttachmentInfo, 1> attachments{{
         {
             .imageView = frame.image_view,
@@ -250,6 +262,26 @@ void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
     cmdbuf.beginRendering(rendering_info);
     cmdbuf.draw(3, 1, 0, 0);
     cmdbuf.endRendering();
+
+    const auto post_barrier = vk::ImageMemoryBarrier2{
+        .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .image = frame.image,
+        .subresourceRange = simple_subresource,
+    };
+
+    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &post_barrier,
+    });
+
+    if (Config::getVkHostMarkersEnabled()) {
+        cmdbuf.endDebugUtilsLabelEXT();
+    }
 }
 
 } // namespace Vulkan::HostPasses

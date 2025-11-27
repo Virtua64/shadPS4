@@ -11,9 +11,12 @@ set(SHADER_FILES
     detilers/micro_32bpp.comp
     detilers/micro_64bpp.comp
     detilers/micro_8bpp.comp
+    color_to_ms_depth.frag
+    ms_image_blit.frag
     fs_tri.vert
     fsr.comp
     post_process.frag
+    tiling.comp
 )
 
 set(SHADER_INCLUDE ${CMAKE_CURRENT_BINARY_DIR}/include)

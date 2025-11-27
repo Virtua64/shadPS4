@@ -32,8 +32,9 @@ struct VideoOutPort {
     std::condition_variable vo_cv;
     std::condition_variable vblank_cv;
     int flip_rate = 0;
+    int prev_index = -1;
     bool is_open = false;
-    bool is_mode_changing = false; // Used to prevent flip during mode change
+    bool is_hdr = false;
 
     s32 FindFreeGroup() const {
         s32 index = 0;
